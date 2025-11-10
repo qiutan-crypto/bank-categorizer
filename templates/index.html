@@ -40,6 +40,12 @@
         <button id="export-project-button" class="px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg shadow hover:shadow-md hover:bg-emerald-100 transition">
           Export Project
         </button>
+        <button id="save-project-server-button" class="px-4 py-2 bg-white text-slate-800 rounded-lg shadow hover:shadow-md transition">
+          Save to Server
+        </button>
+        <button id="load-project-server-button" class="px-4 py-2 bg-white text-slate-800 rounded-lg shadow hover:shadow-md transition">
+          Load from Server
+        </button>
       </div>
     </div>
   </header>
@@ -1289,6 +1295,10 @@ const state = {
   if (projectInput) projectInput.addEventListener('change', handleProjectLoad);
   const exportProjectButton = document.getElementById('export-project-button');
   if (exportProjectButton) exportProjectButton.addEventListener('click', exportProjectSnapshot);
+  const saveProjectServerButton = document.getElementById('save-project-server-button');
+  if (saveProjectServerButton) saveProjectServerButton.addEventListener('click', saveProjectToServer);
+  const loadProjectServerButton = document.getElementById('load-project-server-button');
+  if (loadProjectServerButton) loadProjectServerButton.addEventListener('click', loadProjectFromServer);
 
   async function handleTransactionFiles(e) {
     const files = Array.from(e.target.files || []);
@@ -1355,6 +1365,76 @@ const state = {
     } catch (err) {
       console.error('exportProjectSnapshot error', err);
       showMessage('Unable to export project.', 'error', 4000);
+    }
+  }
+
+  async function saveProjectToServer() {
+    const rawName = prompt('Enter a project name to save on the server (letters, numbers, dash, underscore).');
+    if (rawName === null) return;
+    const trimmed = (rawName || '').trim();
+    if (!trimmed) {
+      showMessage('Server project name is required.', 'warning', 3000);
+      return;
+    }
+    const safeName = trimmed.replace(/[^a-z0-9_\-]/gi, '_');
+    if (!safeName) {
+      showMessage('Server project name is invalid.', 'error', 3500);
+      return;
+    }
+    try {
+      const snapshot = createProjectSnapshot();
+      const response = await fetch('/save_project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: safeName, content: snapshot })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || 'save_project failed');
+      }
+      const result = await response.json().catch(() => ({}));
+      showMessage(result.message || `Saved "${safeName}.json" on the server.`, 'success', 3500);
+    } catch (err) {
+      console.error('saveProjectToServer error', err);
+      showMessage('Unable to save project on the server.', 'error', 4000);
+    }
+  }
+
+  async function loadProjectFromServer() {
+    try {
+      const listResp = await fetch('/list_projects');
+      if (!listResp.ok) {
+        const text = await listResp.text();
+        throw new Error(text || 'list_projects failed');
+      }
+      const files = await listResp.json();
+      if (!Array.isArray(files) || files.length === 0) {
+        showMessage('No saved projects found on the server.', 'info', 3500);
+        return;
+      }
+      const choice = prompt(`Saved projects:\n${files.join('\n')}\n\nType the filename (with or without .json) to load:`);
+      if (choice === null) return;
+      let target = (choice || '').trim();
+      if (!target) {
+        showMessage('Server project selection cancelled.', 'warning', 3000);
+        return;
+      }
+      if (!target.toLowerCase().endsWith('.json')) target += '.json';
+      if (!files.includes(target)) {
+        showMessage(`"${target}" is not in the saved project list.`, 'error', 3500);
+        return;
+      }
+      const loadResp = await fetch(`/load_project/${encodeURIComponent(target)}`);
+      if (!loadResp.ok) {
+        const text = await loadResp.text();
+        throw new Error(text || 'load_project failed');
+      }
+      const data = await loadResp.json();
+      applyProjectSnapshot(data);
+      showMessage(`Loaded "${target}" from the server.`, 'success', 3500);
+    } catch (err) {
+      console.error('loadProjectFromServer error', err);
+      showMessage('Unable to load project from the server.', 'error', 4000);
     }
   }
 
@@ -3839,44 +3919,6 @@ const state = {
 
   // Expose render functions for direct calls
   window.renderUnassigned = renderUnassigned; window.renderAssigned = renderAssigned; window.renderCoa = renderCoa; window.updateReports = updateReports; window.refreshAllDropdowns = refreshAllDropdowns;
- async function exportProjectSnapshot() {
-  const snapshot = createProjectSnapshot(); // already defined in your HTML
-  const filename = prompt("Enter file name (no extension):");
-  if (!filename) return;
-
-  const response = await fetch('/save_project', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ filename: filename, content: snapshot })
-  });
-  const result = await response.json();
-  alert(result.message || "Saved!");
-}
-
-async function handleProjectLoad() {
-  const listResp = await fetch('/list_projects');
-  const files = await listResp.json();
-  if (!files.length) return alert("No saved projects found.");
-
-  const choice = prompt("Available:\n" + files.join("\n") + "\n\nType a filename to load:");
-  if (!choice || !files.includes(choice)) return;
-
-  const loadResp = await fetch('/load_project/' + choice);
-  const data = await loadResp.json();
-  alert("Loaded project: " + choice);
-
-  // Replace your current state with the loaded data
-  if (data.data) {
-    state.transactions = data.data.transactions || [];
-    state.coaTable = data.data.coaTable || [];
-    state.rules = data.data.rules || [];
-    renderUnassigned(); renderAssigned(); refreshAllDropdowns(); updateReports();
-  }
-}
-document.getElementById('project-load-input').remove(); // disable old file input
-const exportBtn = document.getElementById('export-project-button');
-exportBtn.onclick = exportProjectSnapshot;
- 
- </script>
+  </script>
 </body>
 </html>
